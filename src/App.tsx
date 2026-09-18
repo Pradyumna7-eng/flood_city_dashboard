@@ -70,23 +70,35 @@ export default function App() {
 
   // ---- ESP Configuration State ----
   const [espConfig, setEspConfig] = useState<EspConfig>(() => {
-    try {
-      const saved = localStorage.getItem('fmc_esp_config');
-      if (saved) {
-        return JSON.parse(saved);
-      }
-    } catch {
-      // ignore
-    }
-    return {
+    const defaultConfig: EspConfig = {
+      protocol: 'https://',
       ipAddress: '192.168.1.184',
-      port: 80,
+      port: 443,
       endpointPath: '/data',
       pollIntervalMs: 2000,
       useProxy: true,
       connectionMode: 'hardware',
+      hardwareMethod: 'cloud_push',
+      serialBaudRate: 115200,
+      thingspeakChannelId: '',
+      thingspeakReadKey: '',
       activeZoneId: 'zone-1',
     };
+    try {
+      const saved = localStorage.getItem('fmc_esp_config');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          ...defaultConfig,
+          ...parsed,
+          protocol: parsed.protocol || 'https://',
+          hardwareMethod: parsed.hardwareMethod || 'cloud_push',
+        };
+      }
+    } catch {
+      // ignore
+    }
+    return defaultConfig;
   });
 
   useEffect(() => {
@@ -109,6 +121,7 @@ export default function App() {
   const [testResult, setTestResult] = useState<{
     success: boolean;
     message: string;
+    diagnosticAdvice?: string;
     latencyMs?: number;
     rawPayload?: string;
   } | null>(null);
@@ -168,7 +181,11 @@ export default function App() {
 
   // Record Telemetry
   const recordTelemetry = useCallback(
-    (level: number, current: number, source: 'ESP_HARDWARE' | 'SIMULATOR') => {
+    (
+      level: number,
+      current: number,
+      source: 'ESP_HARDWARE' | 'SIMULATOR' | 'USB_SERIAL' | 'CLOUD_PUSH' | 'THINGSPEAK'
+    ) => {
       const now = Date.now();
       const elapsedMin = Math.max(0.01, (now - prevTimestampRef.current) / 60000);
       const deltaLevel = level - prevLevelRef.current;
@@ -214,6 +231,22 @@ export default function App() {
     [thresholds, espConfig.activeZoneId]
   );
 
+  // Direct Telemetry Update (e.g. from Web Serial)
+  const handleDirectTelemetryUpdate = useCallback(
+    (
+      level: number,
+      current: number,
+      source: 'ESP_HARDWARE' | 'SIMULATOR' | 'USB_SERIAL' | 'CLOUD_PUSH' | 'THINGSPEAK'
+    ) => {
+      setWaterLevel(level);
+      setWaterCurrent(current);
+      setLastSuccessfulFetch(new Date());
+      setFetchCount((c) => c + 1);
+      recordTelemetry(level, current, source);
+    },
+    [recordTelemetry]
+  );
+
   // Manual Ping / Connect button
   const handleTestConnection = async () => {
     setIsTesting(true);
@@ -225,6 +258,7 @@ export default function App() {
         setTestResult({
           success: true,
           message: `Connected successfully! Depth: ${result.waterLevel.toFixed(1)} cm, Speed: ${result.waterCurrent.toFixed(2)} m/s (${result.latencyMs}ms response)`,
+          diagnosticAdvice: result.diagnosticAdvice,
           latencyMs: result.latencyMs,
           rawPayload: result.rawResponse,
         });
@@ -232,11 +266,20 @@ export default function App() {
         setWaterCurrent(result.waterCurrent);
         setLastSuccessfulFetch(new Date());
         setFetchCount((c) => c + 1);
-        recordTelemetry(result.waterLevel, result.waterCurrent, 'ESP_HARDWARE');
+        const source =
+          result.sourceType === 'USB_SERIAL'
+            ? 'USB_SERIAL'
+            : result.sourceType === 'CLOUD_PUSH'
+            ? 'CLOUD_PUSH'
+            : result.sourceType === 'THINGSPEAK'
+            ? 'THINGSPEAK'
+            : 'ESP_HARDWARE';
+        recordTelemetry(result.waterLevel, result.waterCurrent, source);
       } else {
         setTestResult({
           success: false,
-          message: result.error || 'Could not connect. Ensure your computer is on the same Wi-Fi as the ESP.',
+          message: result.error || 'Could not connect.',
+          diagnosticAdvice: result.diagnosticAdvice,
           latencyMs: result.latencyMs,
         });
         setErrorCount((c) => c + 1);
@@ -281,6 +324,11 @@ export default function App() {
   useEffect(() => {
     const interval = setInterval(async () => {
       if (espConfig.connectionMode === 'hardware') {
+        // USB Serial streams continuously in real-time, no need for polling
+        if (espConfig.hardwareMethod === 'usb_serial') {
+          return;
+        }
+
         try {
           const result = await fetchEspData(espConfig);
           if (result.success) {
@@ -288,7 +336,13 @@ export default function App() {
             setWaterCurrent(result.waterCurrent);
             setLastSuccessfulFetch(new Date());
             setFetchCount((c) => c + 1);
-            recordTelemetry(result.waterLevel, result.waterCurrent, 'ESP_HARDWARE');
+            const source =
+              result.sourceType === 'CLOUD_PUSH'
+                ? 'CLOUD_PUSH'
+                : result.sourceType === 'THINGSPEAK'
+                ? 'THINGSPEAK'
+                : 'ESP_HARDWARE';
+            recordTelemetry(result.waterLevel, result.waterCurrent, source);
           } else {
             setErrorCount((c) => c + 1);
           }
@@ -414,8 +468,8 @@ export default function App() {
           }}
           activeScenario={activeScenario}
           onSelectScenario={handleSelectScenario}
-          noiseEnabled={noiseEnabled}
-          onToggleNoise={() => setNoiseEnabled(!noiseEnabled)}
+          onOpenCodeModal={() => setCodeModalOpen(true)}
+          onDirectTelemetryUpdate={handleDirectTelemetryUpdate}
         />
 
         {/* 4. Real-time Timeline Trend Chart */}

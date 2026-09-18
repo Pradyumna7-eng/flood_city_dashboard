@@ -1,5 +1,7 @@
 export type DangerLevel = 'SAFE' | 'CAUTION' | 'HIGH_DANGER' | 'CRITICAL';
 
+export type HardwareConnectionMethod = 'wifi_ip' | 'usb_serial' | 'cloud_push' | 'thingspeak';
+
 export interface TelemetryReading {
   id: string;
   timestamp: number;
@@ -10,7 +12,7 @@ export interface TelemetryReading {
   dangerLevel: DangerLevel;
   batteryVoltage?: number; // e.g. 3.9V or 4.2V
   rssi?: number; // dBm WiFi signal
-  source: 'ESP_HARDWARE' | 'SIMULATOR';
+  source: 'ESP_HARDWARE' | 'SIMULATOR' | 'USB_SERIAL' | 'CLOUD_PUSH' | 'THINGSPEAK';
 }
 
 export interface ThresholdConfig {
@@ -26,12 +28,17 @@ export interface ThresholdConfig {
 }
 
 export interface EspConfig {
+  protocol: 'https://' | 'http://';
   ipAddress: string;
   port: number;
   endpointPath: string; // e.g. "/data"
   pollIntervalMs: number; // e.g. 2000
-  useProxy: boolean; // whether to route through /api/esp-proxy to bypass mixed content
+  useProxy: boolean; // whether to route through /api/esp-proxy
   connectionMode: 'hardware' | 'simulator';
+  hardwareMethod: HardwareConnectionMethod;
+  serialBaudRate: number; // default 115200
+  thingspeakChannelId: string;
+  thingspeakReadKey: string;
   activeZoneId: string;
 }
 
